@@ -18,6 +18,18 @@ var rootCmd = &cobra.Command{
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		viper.SetEnvPrefix("wwise")
 		viper.AutomaticEnv()
+
+		// A pre-obtained bearer token (--token / WWISE_TOKEN) bypasses the
+		// email/password login. Required for accounts migrated to the new
+		// (Cognito) sign-in, where the legacy login endpoint rejects
+		// email/password; the token can be taken from an active Wwise
+		// Launcher session (the fCRM_jwt cookie).
+		if viper.IsSet("token") {
+			wwiseClient := client.NewWwiseClientWithToken(viper.GetString("token"))
+			cmd.SetContext(NewContextWithClient(cmd.Context(), wwiseClient))
+			return nil
+		}
+
 		if !viper.IsSet("email") {
 			fmt.Print("Enter Wwise email: ")
 			scanner := bufio.NewScanner(os.Stdin)
@@ -61,6 +73,7 @@ func Execute() {
 func init() {
 	rootCmd.PersistentFlags().String("email", "", "Wwise account email")
 	rootCmd.PersistentFlags().String("password", "", "Wwise account password")
+	rootCmd.PersistentFlags().String("token", "", "Pre-obtained bearer token (skips email/password login)")
 
 	userCache, err := os.UserCacheDir()
 	if err != nil {
@@ -71,5 +84,6 @@ func init() {
 
 	_ = viper.BindPFlag("email", rootCmd.PersistentFlags().Lookup("email"))
 	_ = viper.BindPFlag("password", rootCmd.PersistentFlags().Lookup("password"))
+	_ = viper.BindPFlag("token", rootCmd.PersistentFlags().Lookup("token"))
 	_ = viper.BindPFlag("cache-dir", rootCmd.PersistentFlags().Lookup("cache-dir"))
 }

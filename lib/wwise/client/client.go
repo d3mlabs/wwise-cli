@@ -19,6 +19,15 @@ func NewWwiseClient() *WwiseClient {
 	return &WwiseClient{}
 }
 
+// NewWwiseClientWithToken builds a client from a pre-obtained bearer token,
+// skipping the email/password login flow. This is useful for accounts
+// migrated to the new (Cognito) sign-in, where the legacy login endpoint
+// no longer accepts email/password, and for non-interactive environments
+// that already hold a valid token.
+func NewWwiseClientWithToken(token string) *WwiseClient {
+	return &WwiseClient{auth: token}
+}
+
 func (client *WwiseClient) Authenticate(email string, password string) error {
 	body := map[string]string{"email": email, "password": password}
 	bodyJson, err := json.Marshal(body)
