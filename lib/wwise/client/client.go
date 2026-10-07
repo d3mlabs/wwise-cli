@@ -12,12 +12,31 @@ import (
 )
 
 type WwiseClient struct {
-	auth string
+	auth    string
+	offline bool
 }
 
 func NewWwiseClient() *WwiseClient {
 	return &WwiseClient{}
 }
+
+// NewOfflineClient builds a client that never talks to Audiokinetic: no
+// login, and every API request fails with ErrOffline. Product lookups read
+// the manifest a previous online run cached beside the downloaded files,
+// so a fully cached version can be integrated with no network and no
+// credentials (an image build, for instance).
+func NewOfflineClient() *WwiseClient {
+	return &WwiseClient{offline: true}
+}
+
+// Offline reports whether this client was built with NewOfflineClient.
+func (client *WwiseClient) Offline() bool {
+	return client.offline
+}
+
+// ErrOffline is returned (wrapped, naming the request) when an offline
+// client is asked for something only the API can answer.
+var ErrOffline = errors.New("offline: not cached")
 
 func (client *WwiseClient) Authenticate(email string, password string) error {
 	body := map[string]string{"email": email, "password": password}
@@ -86,6 +105,10 @@ func (res apiResponse) decodePayload() (string, error) {
 }
 
 func (client *WwiseClient) SendRequest(method string, url string, body interface{}) (string, error) {
+	if client.offline {
+		return "", errors.Wrapf(ErrOffline, "%s %s", method, url)
+	}
+
 	bodyJson, err := json.Marshal(body)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to marshal request body")
