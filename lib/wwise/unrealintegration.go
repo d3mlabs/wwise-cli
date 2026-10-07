@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/mircearoata/wwise-cli/lib/unrealengine"
 	"github.com/mircearoata/wwise-cli/lib/wwise/client"
@@ -14,6 +15,62 @@ import (
 	cp "github.com/otiai10/copy"
 )
 
+// UEDeploymentPlatform turns an engine version such as "5.6" into the
+// DeploymentPlatforms group value the Wwise manifest files it under ("UE56").
+func UEDeploymentPlatform(engineVersion string) (string, error) {
+	parts := strings.Split(engineVersion, ".")
+	if len(parts) != 2 {
+		return "", errors.New("engine version must be <major>.<minor>: " + engineVersion)
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", errors.Wrap(err, "invalid engine major version")
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", errors.Wrap(err, "invalid engine minor version")
+	}
+	return fmt.Sprintf("UE%d%d", major, minor), nil
+}
+
+// FetchUnrealIntegration makes sure the Unreal integration package for the
+// given engine deployment platform is in the cache, and returns the cached
+// version together with its manifest. It is the download half of
+// IntegrateWwiseUnreal: nothing is copied into a project.
+func FetchUnrealIntegration(integrationVersion string, ueDeploymentPlatform string, wwiseClient *client.WwiseClient) (*product.WwiseProductVersion, product.ProductVersionInfo, error) {
+	ueIntegrationProduct := product.NewWwiseProduct(wwiseClient, "unrealintegration")
+
+	ueIntegrationVersion, err := ueIntegrationProduct.GetVersion(integrationVersion)
+	if err != nil {
+		return nil, product.ProductVersionInfo{}, errors.Wrap(err, "failed to get unreal integration version")
+	}
+
+	versionInfo, err := ueIntegrationVersion.GetInfo()
+	if err != nil {
+		return nil, product.ProductVersionInfo{}, errors.Wrap(err, "failed to get wwise manifest")
+	}
+
+	integrationFiles := versionInfo.FindFilesByGroups([]product.GroupFilter{
+		{GroupID: "DeploymentPlatforms", GroupValues: []string{ueDeploymentPlatform}},
+		{GroupID: "Packages", GroupValues: []string{"Unreal"}},
+	})
+
+	if len(integrationFiles) == 0 {
+		return nil, product.ProductVersionInfo{}, errors.New("failed to find integration file for " + ueDeploymentPlatform)
+	}
+
+	if len(integrationFiles) > 1 {
+		return nil, product.ProductVersionInfo{}, errors.New("found more than one integration file for " + ueDeploymentPlatform)
+	}
+
+	err = ueIntegrationVersion.DownloadOrCache(integrationFiles[0])
+	if err != nil {
+		return nil, product.ProductVersionInfo{}, errors.Wrap(err, "failed to download integration file")
+	}
+
+	return ueIntegrationVersion, versionInfo, nil
+}
+
 func IntegrateWwiseUnreal(uprojectFilePath string, integrationVersion string, wwiseClient *client.WwiseClient) error {
 	if filepath.Ext(uprojectFilePath) != ".uproject" {
 		return errors.New("invalid project path: " + uprojectFilePath)
@@ -21,18 +78,6 @@ func IntegrateWwiseUnreal(uprojectFilePath string, integrationVersion string, ww
 
 	if _, err := os.Stat(uprojectFilePath); os.IsNotExist(err) {
 		return errors.Wrap(err, "project path does not exist")
-	}
-
-	ueIntegrationProduct := product.NewWwiseProduct(wwiseClient, "unrealintegration")
-
-	ueIntegrationVersion, err := ueIntegrationProduct.GetVersion(integrationVersion)
-	if err != nil {
-		return errors.Wrap(err, "failed to get unreal integration version")
-	}
-
-	versionInfo, err := ueIntegrationVersion.GetInfo()
-	if err != nil {
-		return errors.Wrap(err, "failed to get wwise manifest")
 	}
 
 	// Get UE version from project file
@@ -48,22 +93,9 @@ func IntegrateWwiseUnreal(uprojectFilePath string, integrationVersion string, ww
 
 	wwiseUEDeploymentPlatform := fmt.Sprintf("UE%d%d", engineBuild.MajorVersion, engineBuild.MinorVersion)
 
-	integrationFiles := versionInfo.FindFilesByGroups([]product.GroupFilter{
-		{GroupID: "DeploymentPlatforms", GroupValues: []string{wwiseUEDeploymentPlatform}},
-		{GroupID: "Packages", GroupValues: []string{"Unreal"}},
-	})
-
-	if len(integrationFiles) == 0 {
-		return errors.New("failed to find integration file")
-	}
-
-	if len(integrationFiles) > 1 {
-		return errors.New("found more than one integration file")
-	}
-
-	err = ueIntegrationVersion.DownloadOrCache(integrationFiles[0])
+	ueIntegrationVersion, versionInfo, err := FetchUnrealIntegration(integrationVersion, wwiseUEDeploymentPlatform, wwiseClient)
 	if err != nil {
-		return errors.Wrap(err, "failed to download integration file")
+		return err
 	}
 
 	wwiseSDKVersion := fmt.Sprintf("%d.%d.%d.%d", versionInfo.Version.Year, versionInfo.Version.Major, versionInfo.Version.Minor, versionInfo.ProductDependentData.WwiseSdkBuild)
