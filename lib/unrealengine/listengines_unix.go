@@ -1,3 +1,9 @@
+//go:build linux || darwin
+
+// Epic's Install.ini lives under the user config dir on both platforms:
+// $XDG_CONFIG_HOME (~/.config) on Linux, ~/Library/Application Support on
+// macOS — which is exactly what os.UserConfigDir resolves to, so one
+// implementation covers both.
 package unrealengine
 
 import (

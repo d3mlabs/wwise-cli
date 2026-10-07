@@ -18,6 +18,16 @@ var rootCmd = &cobra.Command{
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		viper.SetEnvPrefix("wwise")
 		viper.AutomaticEnv()
+
+		// --offline: no login, no API. Every product lookup reads the
+		// manifest a previous online run cached beside its files, and a
+		// file not already downloaded is an error. For environments that
+		// hold a complete cache and no credentials (an image build).
+		if viper.GetBool("offline") {
+			cmd.SetContext(NewContextWithClient(cmd.Context(), client.NewOfflineClient()))
+			return nil
+		}
+
 		if !viper.IsSet("email") {
 			fmt.Print("Enter Wwise email: ")
 			scanner := bufio.NewScanner(os.Stdin)
@@ -68,8 +78,10 @@ func init() {
 	}
 	cacheDir := filepath.Join(userCache, "wwise-cli")
 	rootCmd.PersistentFlags().String("cache-dir", cacheDir, "Cache directory")
+	rootCmd.PersistentFlags().Bool("offline", false, "Never log in or call the API: use only what the cache directory already holds")
 
 	_ = viper.BindPFlag("email", rootCmd.PersistentFlags().Lookup("email"))
 	_ = viper.BindPFlag("password", rootCmd.PersistentFlags().Lookup("password"))
 	_ = viper.BindPFlag("cache-dir", rootCmd.PersistentFlags().Lookup("cache-dir"))
+	_ = viper.BindPFlag("offline", rootCmd.PersistentFlags().Lookup("offline"))
 }

@@ -123,18 +123,46 @@ func (v *WwiseProductVersion) readDownloadedInfo() error {
 	return nil
 }
 
+// manifestFileName is the version manifest as the API returned it, cached
+// beside info.json so an offline client can answer GetInfo.
+const manifestFileName = "version-manifest.json"
+
+// GetInfo returns the version manifest: online, from the API (and caches
+// the raw payload beside info.json); offline, from that cache.
 func (v *WwiseProductVersion) GetInfo() (ProductVersionInfo, error) {
-	payload, err := v.Product.Client.SendRequest("GET", "/products/versions/"+v.Product.ProductName+"."+strings.ReplaceAll(v.VersionId, ".", "_"), nil)
-	if err != nil {
-		return ProductVersionInfo{}, errors.Wrap(err, "failed to get product version info")
+	manifestPath := filepath.Join(v.Dir, manifestFileName)
+
+	var payload []byte
+	if v.Product.Client.Offline() {
+		cached, err := os.ReadFile(manifestPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return ProductVersionInfo{}, errors.Wrapf(client.ErrOffline, "no manifest for %s %s at %s (run once online to cache it)", v.Product.ProductName, v.VersionId, manifestPath)
+			}
+			return ProductVersionInfo{}, errors.Wrap(err, "failed to read cached product version info")
+		}
+		payload = cached
+	} else {
+		fetched, err := v.Product.Client.SendRequest("GET", "/products/versions/"+v.Product.ProductName+"."+strings.ReplaceAll(v.VersionId, ".", "_"), nil)
+		if err != nil {
+			return ProductVersionInfo{}, errors.Wrap(err, "failed to get product version info")
+		}
+		payload = []byte(fetched)
 	}
 
 	var data struct {
 		Data ProductVersionInfo `json:"data"`
 	}
-	err = json.Unmarshal([]byte(payload), &data)
+	err := json.Unmarshal(payload, &data)
 	if err != nil {
 		return ProductVersionInfo{}, errors.Wrap(err, "failed to unmarshal product version info")
+	}
+
+	if !v.Product.Client.Offline() {
+		// Cache only what parsed: a bad payload must not poison the offline path.
+		if err := os.WriteFile(manifestPath, payload, 0644); err != nil {
+			return ProductVersionInfo{}, errors.Wrap(err, "failed to cache product version info")
+		}
 	}
 
 	return data.Data, nil
@@ -143,6 +171,10 @@ func (v *WwiseProductVersion) GetInfo() (ProductVersionInfo, error) {
 func (v *WwiseProductVersion) DownloadOrCache(file File) error {
 	if v.downloadedInfo.IsFileDownloaded(file.Name) {
 		return nil
+	}
+
+	if v.Product.Client.Offline() {
+		return errors.Wrapf(client.ErrOffline, "%s is not in the cache at %s", file.Name, v.Dir)
 	}
 
 	fileResp, err := http.Get(file.URL)
